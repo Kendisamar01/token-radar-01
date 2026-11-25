@@ -85,7 +85,7 @@
   }
   function hero() {
     return el("section", { "class": "hero" },
-      el("div", null, el("h1", { text: "Pre-token opportunity radar" }), el("p", { text: "Protocols ranked by implied value, derived from TVL, seven-day growth and age on record. A model estimate, not a promise or airdrop prediction." })),
+      el("div", null, el("h1", { text: "Pre-token opportunity radar" }), el("p", { text: "Launch candidates ranked by implied value from TVL, seven-day growth and time with no token. Tokens already trading and products of traded assets sit below candidates. A model estimate, not a promise." })),
       el("div", { "class": "metrics" },
         el("div", { "class": "metric" }, el("b", { text: String(D.watchlist_size) }), el("span", { text: "Watchlist" })),
         el("div", { "class": "metric" }, el("b", { text: String(D.board_size) }), el("span", { text: "Scored" })),
@@ -123,7 +123,7 @@
         el("td", { "class": "num " + (r.change_7d > 0 ? "pos" : r.change_7d < 0 ? "neg" : ""), text: pct(r.change_7d) }),
         el("td", { "class": "num", text: age(r.age_days) }),
         el("td", null, el("div", { "class": "value" }, el("span", { "class": "bar" }, el("i", { style: "width:" + Math.max(3, Math.round(r.implied_value_usd / max * 100)) + "%" })), el("span", { "class": "num", text: usd(r.implied_value_usd) }))),
-        el("td", null, el("span", { "class": "sub", text: "No token on record" }))
+        el("td", null, el("span", { "class": "sub", text: r.launch_candidate ? "Launch candidate · no token recorded" : "Token or product on record" }))
       );
       tbody.appendChild(tr);
     });
@@ -140,10 +140,10 @@
   function modelStrip() {
     var m = D.model;
     return el("section", { "class": "modelstrip" },
-      el("div", null, el("b", { text: "Value model" }), el("span", { text: "TVL weight " + m.tvl_weight + " · maturity 0.65–1.00" })),
-      el("div", null, el("b", { text: "Growth" }), el("span", { text: "clamped " + m.growth_floor + "% to +" + m.growth_cap + "%, weight " + m.growth_weight })),
-      el("div", null, el("b", { text: "Maturity" }), el("span", { text: "age cap " + m.age_cap_days + " days; unknown age 365d" })),
-      el("div", null, el("b", { text: "Coverage" }), el("span", { text: "Category and chain factors; no name hardcoding" })));
+      el("div", null, el("b", { text: "Value model" }), el("span", { text: "TVL^" + m.tvl_weight + " x " + m.value_scale + ", no hardcoded names" })),
+      el("div", null, el("b", { text: "Growth" }), el("span", { text: "7-day change clamped " + m.growth_floor + "% to +" + m.growth_cap + "%, weight " + m.growth_weight })),
+      el("div", null, el("b", { text: "Tenure" }), el("span", { text: "no-token years " + (m.age_floor + "–1.00") + " to " + m.age_cap_days + "d, plus " + m.tenure_bonus + " freshness" })),
+      el("div", null, el("b", { text: "Candidates" }), el("span", { text: "CEX, bridge, staking and wrapped products rank below; category/chain factors" })));
   }
   function openDetail(slug) {
     state.slug = slug;

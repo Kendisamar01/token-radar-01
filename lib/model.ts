@@ -8,18 +8,18 @@ export interface Snapshot {
   protocols: SnapshotProtocol[]; watchlist: string[];
 }
 export interface ModelConstants {
-  tvl_weight: number; growth_floor: number; growth_cap: number;
-  growth_weight: number; age_floor: number; age_cap_days: number;
+  tvl_weight: number; value_scale: number; growth_floor: number; growth_cap: number;
+  growth_weight: number; age_floor: number; age_cap_days: number; tenure_bonus: number;
   category_weight: number; chain_weight: number;
   live_scale: number; live_residual_scale: number; pre_residual_scale: number;
 }
 export const MODEL: ModelConstants = {
-  tvl_weight: 0.22, growth_floor: -50, growth_cap: 100,
-  growth_weight: 0.6, age_floor: 0.65, age_cap_days: 1460,
-  category_weight: 0.08, chain_weight: 0.04,
+  tvl_weight: 0.75, value_scale: 20, growth_floor: -50, growth_cap: 100,
+  growth_weight: 1.2, age_floor: 0.75, age_cap_days: 1095, tenure_bonus: 0.2,
+  category_weight: 0.08, chain_weight: 0.025,
   live_scale: 0.2, live_residual_scale: 0.005, pre_residual_scale: 0.03,
 };
-export const MODEL_VERSION = 'radar-full-3';
+export const MODEL_VERSION = 'radar-value-4';
 const DAY_MS = 86400000;
 const VERSIONED = /\s(v?\d+(?:\.\d+)?|V\d+(?:\.\d+)?)$/;
 const DERIVED = /\b(wrapped|staked|staking|bridged)\b/i;
@@ -27,8 +27,16 @@ const DERIVED = /\b(wrapped|staked|staking|bridged)\b/i;
 export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
+function isProduct(p: SnapshotProtocol): boolean {
+  const c = (p.category || '').toLowerCase();
+  return c === 'cex' || c.includes('centralized') || c.includes('bridge') || c.includes('staking') ||
+    c.includes('restak') || c.includes('wrapped') || VERSIONED.test(p.name) || DERIVED.test(p.name);
+}
+export function isCandidate(p: SnapshotProtocol): boolean {
+  return isPreToken(p) && !isProduct(p);
+}
 export function isRankable(p: SnapshotProtocol): boolean {
-  return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
+  return isCandidate(p);
 }
 export function ageDays(asOf: string, listedAt: string | null): number | null {
   if (!listedAt) return null;
@@ -43,21 +51,19 @@ function categoryFactor(category: string | null): number {
   if (c.includes('perpetual') || c.includes('derivative') || c.includes('rwa')) return 1.06;
   return 1;
 }
-function isProduct(p: SnapshotProtocol): boolean {
-  const c = (p.category || '').toLowerCase();
-  return c === 'cex' || c.includes('bridge') || c.includes('staking') || c.includes('restak') || VERSIONED.test(p.name) || DERIVED.test(p.name);
-}
 function signals(p: SnapshotProtocol, asOf: string, model: ModelConstants) {
   const age = ageDays(asOf, p.listed_at);
   const growth = Math.min(model.growth_cap, Math.max(model.growth_floor, p.change_7d ?? 0));
   const ageDaysUsed = age ?? 365;
-  const agePart = model.age_floor + Math.min(Math.max(ageDaysUsed, 0), model.age_cap_days) / model.age_cap_days * (1 - model.age_floor);
-  const chainScale = 1 + Math.min(p.chains.length, 5) * model.chain_weight;
+  const agePart = model.age_floor +
+    Math.min(Math.max(ageDaysUsed, 0), model.age_cap_days) / model.age_cap_days * (1 - model.age_floor) +
+    model.tenure_bonus * Math.exp(-ageDaysUsed / 365);
+  const chainScale = 1 + Math.min(p.chains.length, 8) * model.chain_weight;
   return { age, growth, agePart, chainScale };
 }
 export function impliedValue(p: SnapshotProtocol, asOf: string, model: ModelConstants = MODEL) {
   const s = signals(p, asOf, model);
-  const raw = p.tvl_usd * model.tvl_weight *
+  const raw = Math.pow(p.tvl_usd, model.tvl_weight) * model.value_scale *
     (1 + s.growth / 100 * model.growth_weight) *
     s.agePart * categoryFactor(p.category) * s.chainScale * (isProduct(p) ? model.pre_residual_scale : 1);
   return { implied: Math.max(1, Math.round(raw)), age: s.age, growth: s.growth };
@@ -75,7 +81,8 @@ export interface BoardRow {
   rank: number; slug: string; name: string; category: string | null; chains: string[];
   tvl_usd: number; change_7d: number | null; mcap_usd: number | null;
   listed_at: string | null; gecko_id: string | null; symbol: string | null;
-  token_status: 'pre-token' | 'already-trading'; age_days: number | null; implied_value_usd: number;
+  token_status: 'pre-token' | 'already-trading'; launch_candidate: boolean;
+  age_days: number | null; implied_value_usd: number;
   model: { tvl_weight: number; growth_pct: number; age_days: number | null; category_factor: number; chain_factor: number };
   farm_steps: string[];
 }
@@ -83,7 +90,7 @@ export interface RadarRow {
   rank: number; slug: string; name: string; category: string | null; chains: string[];
   tvl_usd: number; change_7d: number | null; mcap_usd: number | null;
   listed_at: string | null; age_days: number | null; implied_value_usd: number;
-  token_status: 'pre-token' | 'already-trading';
+  token_status: 'pre-token' | 'already-trading'; launch_candidate: boolean;
 }
 export interface RadarData {
   as_of: string; source: string; floor_usd: number; model: ModelConstants;
@@ -120,9 +127,11 @@ function stepText(text: string, cost: string, time: string) {
 }
 export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
   const chain = chainOf(p), capital = capitalFor(p), hold = holdFor(age);
-  const status = isPreToken(p)
-    ? 'The snapshot records no token for this protocol, so a launch is unconfirmed.'
-    : `The snapshot records a token${p.symbol ? ` (${p.symbol})` : ''}${p.mcap_usd ? ` at about $${Math.round(p.mcap_usd / 1e6)}M market cap` : ''}, so this is a live position, not a pending launch.`;
+  const status = isCandidate(p)
+    ? 'The snapshot records no token and no product of a traded token for this protocol, so a launch is unconfirmed.'
+    : isPreToken(p)
+      ? 'The snapshot records no token for this product of a traded asset, so treat it as a live product, not a pending launch.'
+      : `The snapshot records a token${p.symbol ? ` (${p.symbol})` : ''}${p.mcap_usd ? ` at about $${Math.round(p.mcap_usd / 1e6)}M market cap` : ''}, so this is a live position, not a pending launch.`;
   return [
     stepText(`Use a fresh wallet containing only the funds for this activity and keep the seed phrase offline. ${status}`, 'under $3 of network gas', '5 minutes'),
     stepText(actionFor(p, capital, chain), `$${capital} of capital and about $${capital >= 150 ? 8 : 4} of gas`, '15 minutes'),
@@ -150,9 +159,10 @@ export function parseSnapshot(text: string): Snapshot {
 }
 
 export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
-  const early = snapshot.protocols.filter(isPreToken).map(p => ({ p, ...impliedValue(p, snapshot.as_of, model), token_status: 'pre-token' as const }));
+  const candidateSlugs = new Set(snapshot.protocols.filter(isCandidate).map(p => p.slug));
+  const early = snapshot.protocols.filter(p => candidateSlugs.has(p.slug)).map(p => ({ p, ...impliedValue(p, snapshot.as_of, model), token_status: 'pre-token' as const }));
   const ceiling = Math.max(1, Math.min(...early.map(e => e.implied)) - 1);
-  const trading = snapshot.protocols.filter(p => !isPreToken(p)).map(p => ({ p, ...tradingValue(p, snapshot.as_of, ceiling, model), token_status: 'already-trading' as const }));
+  const trading = snapshot.protocols.filter(p => !candidateSlugs.has(p.slug)).map(p => ({ p, ...tradingValue(p, snapshot.as_of, ceiling, model), token_status: 'already-trading' as const }));
   const scored = [...early, ...trading].sort((a, b) =>
     b.implied - a.implied ||
     (a.token_status === b.token_status ? 0 : a.token_status === 'pre-token' ? -1 : 1) ||
@@ -161,12 +171,12 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     rank: i + 1, slug: s.p.slug, name: s.p.name, category: s.p.category,
     chains: s.p.chains, tvl_usd: s.p.tvl_usd, change_7d: s.p.change_7d,
     mcap_usd: s.p.mcap_usd, listed_at: s.p.listed_at, gecko_id: s.p.gecko_id,
-    symbol: s.p.symbol, token_status: s.token_status, age_days: s.age,
+    symbol: s.p.symbol, token_status: s.token_status, launch_candidate: s.token_status === 'pre-token', age_days: s.age,
     implied_value_usd: s.implied,
     model: {
       tvl_weight: model.tvl_weight, growth_pct: s.growth, age_days: s.age,
       category_factor: categoryFactor(s.p.category),
-      chain_factor: 1 + Math.min(s.p.chains.length, 5) * model.chain_weight,
+      chain_factor: 1 + Math.min(s.p.chains.length, 8) * model.chain_weight,
     },
     farm_steps: farmSteps(s.p, s.age),
   }));
@@ -188,7 +198,7 @@ export function buildRadar(snapshot: Snapshot) {
       rank: r.rank, slug: r.slug, name: r.name, category: r.category, chains: r.chains,
       tvl_usd: r.tvl_usd, change_7d: r.change_7d, mcap_usd: r.mcap_usd,
       listed_at: r.listed_at, age_days: r.age_days, implied_value_usd: r.implied_value_usd,
-      token_status: r.token_status,
+      token_status: r.token_status, launch_candidate: r.launch_candidate,
     })),
     live,
   };
