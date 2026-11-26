@@ -15,11 +15,11 @@ export interface ModelConstants {
 }
 export const MODEL: ModelConstants = {
   tvl_weight: 0.75, value_scale: 20, growth_floor: -50, growth_cap: 100,
-  growth_weight: 1.2, age_floor: 0.75, age_cap_days: 1095, tenure_bonus: 0.2,
-  category_weight: 0.08, chain_weight: 0.025,
+  growth_weight: 0.8, age_floor: 0.5, age_cap_days: 1095, tenure_bonus: 0.1,
+  category_weight: 0.08, chain_weight: 0.1,
   live_scale: 0.2, live_residual_scale: 0.005, pre_residual_scale: 0.03,
 };
-export const MODEL_VERSION = 'radar-value-4';
+export const MODEL_VERSION = 'radar-value-5';
 const DAY_MS = 86400000;
 const VERSIONED = /\s(v?\d+(?:\.\d+)?|V\d+(?:\.\d+)?)$/;
 const DERIVED = /\b(wrapped|staked|staking|bridged)\b/i;
